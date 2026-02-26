@@ -1,19 +1,20 @@
-"""RED — tests for chutes_bench.game (game runner)."""
+"""Tests for chutes_bench.game (game runner)."""
 
 from chutes_bench.board import BoardState
-from chutes_bench.game import GameRunner, GameResult, Player
+from chutes_bench.game import GameRunner, GameResult
 
 
-class FakePlayer(Player):
+class FakePlayer:
     """Deterministic player for testing — plays a scripted sequence of actions."""
 
-    def __init__(self, script: list[tuple[str, dict]]):
+    def __init__(self, script: list[tuple[str, dict]], player_name: str = "fake"):
         self.script = list(script)
         self._idx = 0
+        self._name = player_name
 
     @property
     def name(self) -> str:
-        return "fake"
+        return self._name
 
     def next_action(self, observation: str) -> tuple[str, dict]:
         action = self.script[self._idx]

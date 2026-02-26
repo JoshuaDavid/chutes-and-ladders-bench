@@ -77,7 +77,7 @@ Ladders (↑)          Chutes (↓)
 # Install
 uv sync --all-extras
 
-# Run all pairings (N trials each)
+# Run all pairings (N trials each) — resumes automatically if interrupted
 uv run python -m chutes_bench run --trials 5
 
 # Compute Elo from saved results
@@ -86,6 +86,9 @@ uv run python -m chutes_bench elo
 # Generate leaderboard chart
 uv run python -m chutes_bench chart
 ```
+
+Results are stored in `results/benchmark.db` (SQLite). You can stop and
+restart `run` at any time — it picks up where it left off.
 
 ### Environment variables
 
@@ -105,14 +108,18 @@ chutes_bench/
   board.py          # Board state, chutes/ladders map, movement rules
   tools.py          # Tool definitions and action validation
   game.py           # Game runner — orchestrates two LLM players
+  players.py        # LLM player adapters (OpenAI, Anthropic, OpenRouter)
   elo.py            # Elo calculation from pairwise results
   chart.py          # Matplotlib leaderboard chart
+  persistence.py    # SQLite storage for pause/resume/parallelization
   __main__.py       # CLI entry point
 tests/
   test_board.py
   test_tools.py
+  test_moves.py
   test_game.py
   test_elo.py
+  test_persistence.py
 ```
 
 ## License

@@ -7,7 +7,6 @@ import os
 from dataclasses import dataclass, field
 
 from chutes_bench.board import CHUTES_LADDERS
-from chutes_bench.game import Player
 from chutes_bench.tools import TOOL_SCHEMAS
 
 # ── System prompt ────────────────────────────────────────────────────
@@ -44,7 +43,7 @@ Play to win. Do not forfeit or offer draws unless the situation is truly hopeles
 # ── OpenAI-compatible player (works for OpenAI + OpenRouter) ─────────
 
 @dataclass
-class OpenAIPlayer(Player):
+class OpenAIPlayer:
     """Player backed by any OpenAI-compatible chat/completions API."""
 
     model: str
@@ -135,7 +134,7 @@ def _openai_tools_to_anthropic(tools: list[dict]) -> list[dict]:
 
 
 @dataclass
-class AnthropicPlayer(Player):
+class AnthropicPlayer:
     """Player backed by Anthropic's messages API."""
 
     model: str
@@ -196,7 +195,7 @@ class ModelSpec:
     display_name: str
     provider: str  # "openai" | "anthropic" | "openrouter"
 
-    def make_player(self) -> Player:
+    def make_player(self) -> OpenAIPlayer | AnthropicPlayer:
         if self.provider == "anthropic":
             return AnthropicPlayer(
                 model=self.id,

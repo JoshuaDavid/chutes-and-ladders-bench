@@ -131,15 +131,61 @@ TOOL_SCHEMAS: list[dict] = [
 
 @dataclass
 class TurnPhase:
-    """Tracks what a player has done so far this turn."""
+    """Tracks what a player has done so far this turn.
+
+    Supports multi-step movement: a player may call move_pawn_to_square
+    multiple times to walk through intermediate squares before arriving
+    at the final resting position.
+    """
 
     has_spun: bool = False
     spin_value: int | None = None
-    has_moved: bool = False
-    moved_to: int | None = None
-    needs_chute_or_ladder: str | None = None  # "chute" | "ladder" | None
-    chute_or_ladder_done: bool = False
+    # Populated by the game runner (or test) before validation starts
+    start_position: int = 0
+    # Tracks where the pawn is right now during multi-step movement
+    current_position: int | None = None  # None = hasn't moved yet
+    # Set once the pawn reaches the final valid resting position
+    reached_final: bool = False
     draw_offered_to_me: bool = False
+
+    # Legacy compat — kept for game.py commit logic
+    @property
+    def has_moved(self) -> bool:
+        return self.current_position is not None
+
+    @property
+    def moved_to(self) -> int | None:
+        return self.current_position
+
+    @property
+    def chute_or_ladder_done(self) -> bool:
+        """True if we've passed through a chute/ladder to the final dest."""
+        if not self.reached_final or self.current_position is None:
+            return False
+        landing = self._landing_square()
+        if landing is None:
+            return False
+        cl_dest = CHUTES_LADDERS.get(landing)
+        return cl_dest is not None and self.current_position == cl_dest
+
+    def _landing_square(self) -> int | None:
+        if self.spin_value is None:
+            return None
+        target = self.start_position + self.spin_value
+        if target > 100:
+            return None  # bounce
+        return target
+
+    def _final_resting_square(self) -> int | None:
+        """Where the pawn must end up this turn."""
+        landing = self._landing_square()
+        if landing is None:
+            # Bounce → stay put
+            return self.start_position if self.spin_value is not None else None
+        cl_dest = CHUTES_LADDERS.get(landing)
+        if cl_dest is not None:
+            return cl_dest
+        return landing
 
 
 # ── Action result ────────────────────────────────────────────────────
@@ -194,97 +240,140 @@ def validate_action(
         value = random.randint(1, 6)
         phase.has_spun = True
         phase.spin_value = value
+        phase.start_position = board.positions[player]
         return ActionResult(ok=True, spin_value=value, message=f"You spun a {value}.")
 
     # ── move_pawn_to_square ──
     if tool_name == "move_pawn_to_square":
-        if not phase.has_spun:
-            return ActionResult(ok=False, illegal=True, message="You must spin first.")
-        if phase.has_moved:
-            return ActionResult(ok=False, illegal=True, message="Already moved this turn.")
-
-        target_square = args.get("square")
-        if target_square is None:
-            return ActionResult(ok=False, illegal=True, message="Missing 'square' argument.")
-
-        spin_result = apply_spin(board, player, phase.spin_value)
-
-        # Bounce case: player must pass their current position
-        if spin_result.bounced:
-            if target_square != board.positions[player]:
-                return ActionResult(
-                    ok=False, illegal=True,
-                    message=f"Spin overshoots 100. You must stay on {board.positions[player]}.",
-                )
-            phase.has_moved = True
-            return ActionResult(ok=True, bounced=True, message="Spin overshoots 100. You stay put.")
-
-        if target_square != spin_result.new_position:
-            return ActionResult(
-                ok=False, illegal=True,
-                message=f"Wrong square. Expected {spin_result.new_position}, got {target_square}.",
-            )
-
-        phase.has_moved = True
-        phase.moved_to = target_square
-
-        # Check chute/ladder
-        if is_ladder(target_square):
-            phase.needs_chute_or_ladder = "ladder"
-            return ActionResult(
-                ok=True, requires_ladder=True,
-                message=f"Moved to {target_square}. There's a ladder here!",
-            )
-        if is_chute(target_square):
-            phase.needs_chute_or_ladder = "chute"
-            return ActionResult(
-                ok=True, requires_chute=True,
-                message=f"Moved to {target_square}. There's a chute here!",
-            )
-
-        won = target_square == 100
-        return ActionResult(ok=True, won=won, message=f"Moved to {target_square}.")
+        return _validate_move(board, player, args, phase)
 
     # ── ascend_ladder_to_square ──
     if tool_name == "ascend_ladder_to_square":
-        if phase.needs_chute_or_ladder != "ladder":
-            return ActionResult(ok=False, illegal=True, message="No ladder to ascend.")
-        dest = args.get("square")
-        expected = CHUTES_LADDERS.get(phase.moved_to, -1)
-        if dest != expected:
-            return ActionResult(
-                ok=False, illegal=True,
-                message=f"Wrong ladder destination. Expected {expected}, got {dest}.",
-            )
-        phase.needs_chute_or_ladder = None
-        phase.chute_or_ladder_done = True
-        won = dest == 100
-        return ActionResult(ok=True, won=won, message=f"Climbed ladder to {dest}!")
+        return _validate_ladder(args, phase)
 
     # ── descend_chute_to_square ──
     if tool_name == "descend_chute_to_square":
-        if phase.needs_chute_or_ladder != "chute":
-            return ActionResult(ok=False, illegal=True, message="No chute to descend.")
-        dest = args.get("square")
-        expected = CHUTES_LADDERS.get(phase.moved_to, -1)
-        if dest != expected:
-            return ActionResult(
-                ok=False, illegal=True,
-                message=f"Wrong chute destination. Expected {expected}, got {dest}.",
-            )
-        phase.needs_chute_or_ladder = None
-        phase.chute_or_ladder_done = True
-        return ActionResult(ok=True, message=f"Slid down chute to {dest}.")
+        return _validate_chute(args, phase)
 
     # ── end_turn ──
     if tool_name == "end_turn":
-        if not phase.has_moved:
-            return ActionResult(ok=False, illegal=True, message="You must move before ending your turn.")
-        if phase.needs_chute_or_ladder is not None:
-            return ActionResult(
-                ok=False, illegal=True,
-                message=f"You must take the {phase.needs_chute_or_ladder} before ending your turn.",
-            )
-        return ActionResult(ok=True, turn_over=True, message="Turn over.")
+        return _validate_end_turn(phase)
 
     return ActionResult(ok=False, illegal=True, message=f"Unknown tool: {tool_name}")
+
+
+def _validate_move(
+    board: BoardState, player: int, args: dict, phase: TurnPhase,
+) -> ActionResult:
+    if not phase.has_spun:
+        return ActionResult(ok=False, illegal=True, message="You must spin first.")
+    if phase.reached_final:
+        return ActionResult(ok=False, illegal=True, message="Already at final position.")
+
+    target_square = args.get("square")
+    if target_square is None:
+        return ActionResult(ok=False, illegal=True, message="Missing 'square' argument.")
+
+    landing = phase._landing_square()
+    final_resting = phase._final_resting_square()
+    cur = phase.current_position if phase.current_position is not None else phase.start_position
+
+    # ── Bounce case ──
+    if landing is None:
+        if target_square != phase.start_position:
+            return ActionResult(
+                ok=False, illegal=True,
+                message=f"Spin overshoots 100. You must stay on {phase.start_position}.",
+            )
+        phase.current_position = phase.start_position
+        phase.reached_final = True
+        return ActionResult(ok=True, bounced=True, message="Spin overshoots 100. You stay put.")
+
+    # ── Direct jump to final resting position (e.g. move(14) when ladder 4→14) ──
+    if target_square == final_resting and final_resting != landing:
+        phase.current_position = final_resting
+        phase.reached_final = True
+        won = final_resting == 100
+        return ActionResult(ok=True, won=won, message=f"Moved to {final_resting}.")
+
+    # ── Intermediate or landing square ──
+    # Must be forward from current position
+    if target_square <= cur:
+        return ActionResult(
+            ok=False, illegal=True,
+            message=f"Can't move backward. Current position is {cur}, tried {target_square}.",
+        )
+    # Must not go past the landing square
+    if target_square > landing:
+        return ActionResult(
+            ok=False, illegal=True,
+            message=f"Square {target_square} is past your landing square {landing}.",
+        )
+
+    phase.current_position = target_square
+
+    # Did we reach the landing square?
+    if target_square == landing:
+        if is_ladder(landing):
+            return ActionResult(
+                ok=True, requires_ladder=True,
+                message=f"Moved to {landing}. There's a ladder here!",
+            )
+        if is_chute(landing):
+            return ActionResult(
+                ok=True, requires_chute=True,
+                message=f"Moved to {landing}. There's a chute here!",
+            )
+        # Plain landing square, no chute/ladder
+        phase.reached_final = True
+        won = landing == 100
+        return ActionResult(ok=True, won=won, message=f"Moved to {landing}.")
+
+    # Intermediate square
+    return ActionResult(ok=True, message=f"Moved to {target_square}.")
+
+
+def _validate_ladder(args: dict, phase: TurnPhase) -> ActionResult:
+    landing = phase._landing_square()
+    if landing is None or phase.current_position != landing or not is_ladder(landing):
+        return ActionResult(ok=False, illegal=True, message="No ladder to ascend.")
+
+    dest = args.get("square")
+    expected = CHUTES_LADDERS[landing]
+    if dest != expected:
+        return ActionResult(
+            ok=False, illegal=True,
+            message=f"Wrong ladder destination. Expected {expected}, got {dest}.",
+        )
+    phase.current_position = dest
+    phase.reached_final = True
+    won = dest == 100
+    return ActionResult(ok=True, won=won, message=f"Climbed ladder to {dest}!")
+
+
+def _validate_chute(args: dict, phase: TurnPhase) -> ActionResult:
+    landing = phase._landing_square()
+    if landing is None or phase.current_position != landing or not is_chute(landing):
+        return ActionResult(ok=False, illegal=True, message="No chute to descend.")
+
+    dest = args.get("square")
+    expected = CHUTES_LADDERS[landing]
+    if dest != expected:
+        return ActionResult(
+            ok=False, illegal=True,
+            message=f"Wrong chute destination. Expected {expected}, got {dest}.",
+        )
+    phase.current_position = dest
+    phase.reached_final = True
+    return ActionResult(ok=True, message=f"Slid down chute to {dest}.")
+
+
+def _validate_end_turn(phase: TurnPhase) -> ActionResult:
+    if not phase.has_moved:
+        return ActionResult(ok=False, illegal=True, message="You must move before ending your turn.")
+    if not phase.reached_final:
+        return ActionResult(
+            ok=False, illegal=True,
+            message=f"You haven't reached your final square yet. Currently on {phase.current_position}.",
+        )
+    return ActionResult(ok=True, turn_over=True, message="Turn over.")

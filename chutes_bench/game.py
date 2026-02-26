@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Protocol, runtime_checkable
 
 from chutes_bench.board import BoardState, CHUTES_LADDERS
 from chutes_bench.tools import TurnPhase, validate_action, ActionResult
@@ -11,22 +11,16 @@ from chutes_bench.tools import TurnPhase, validate_action, ActionResult
 
 # ── Player interface ─────────────────────────────────────────────────
 
-class Player(ABC):
-    """Interface that every player (LLM or fake) must implement."""
+@runtime_checkable
+class Player(Protocol):
+    """Structural interface — any object with these methods works."""
 
     @property
-    @abstractmethod
     def name(self) -> str: ...
 
-    @abstractmethod
-    def next_action(self, observation: str) -> tuple[str, dict]:
-        """Return (tool_name, args) for the next action."""
-        ...
+    def next_action(self, observation: str) -> tuple[str, dict]: ...
 
-    @abstractmethod
-    def observe(self, message: str) -> None:
-        """Receive a message (result of action, opponent chat, etc.)."""
-        ...
+    def observe(self, message: str) -> None: ...
 
 
 # ── Game result ──────────────────────────────────────────────────────
@@ -85,9 +79,8 @@ class GameRunner:
         """Run one player's full turn. Returns GameResult if game ends."""
         player = self.players[player_idx]
         opponent_idx = 1 - player_idx
-        phase = TurnPhase()
+        phase = TurnPhase(start_position=self.board.positions[player_idx])
 
-        # If a draw was offered to this player, let them know
         if self.draw_offered_by == opponent_idx:
             phase.draw_offered_to_me = True
 
@@ -107,11 +100,9 @@ class GameRunner:
             )
 
             if not result.ok:
-                # Illegal move → automatic loss
                 self.log.append({"event": "illegal_move", "player": player_idx, "msg": result.message})
                 return GameResult(winner=opponent_idx, reason="illegal_move")
 
-            # Handle special results
             if result.forfeit:
                 return GameResult(winner=opponent_idx, reason="forfeit")
 
@@ -122,24 +113,14 @@ class GameRunner:
                 self.draw_offered_by = player_idx
 
             if result.won:
-                # Commit position before returning
-                final_pos = phase.moved_to or self.board.positions[player_idx]
-                cl_dest = CHUTES_LADDERS.get(final_pos)
-                if cl_dest == 100:
-                    self.board.positions[player_idx] = 100
-                else:
-                    self.board.positions[player_idx] = final_pos
+                self.board.positions[player_idx] = phase.current_position or 100
                 return GameResult(winner=player_idx, reason="win")
 
             if result.turn_over:
-                # Commit final position
-                if phase.chute_or_ladder_done and phase.moved_to is not None:
-                    self.board.positions[player_idx] = CHUTES_LADDERS[phase.moved_to]
-                elif phase.moved_to is not None:
-                    self.board.positions[player_idx] = phase.moved_to
+                if phase.current_position is not None:
+                    self.board.positions[player_idx] = phase.current_position
                 break
 
-            # Feed result back as next observation
             observation = result.message
             player.observe(result.message)
 
