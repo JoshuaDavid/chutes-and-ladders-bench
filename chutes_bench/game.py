@@ -116,6 +116,8 @@ class GameRunner:
                 "is_forfeit": result.forfeit,
                 "is_turn_over": result.turn_over,
             }
+            if result.spin_value is not None:
+                log_entry["spin_value"] = result.spin_value
             if invocation is not None:
                 log_entry["invocation"] = invocation
 
