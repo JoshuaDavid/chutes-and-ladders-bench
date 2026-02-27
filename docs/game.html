@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Game Viewer &mdash; Chutes &amp; Ladders Bench</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+    --p0: #58a6ff; --p1: #d2a8ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         background: var(--bg); color: var(--text); line-height: 1.5; padding: 2rem; max-width: 960px; margin: 0 auto; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .back { margin-bottom: 1rem; display: inline-block; }
+
+  /* Header */
+  .game-header { background: var(--surface); border: 1px solid var(--border);
+                  border-radius: 6px; padding: 1.25rem; margin-bottom: 1.5rem; }
+  .game-header h1 { font-size: 1.4rem; margin-bottom: .4rem; }
+  .game-header .meta { color: var(--muted); font-size: .9rem; }
+  .game-header .meta span { margin-right: 1.5rem; }
+  .reason-badge { display: inline-block; padding: .1rem .5rem; border-radius: 3px;
+                  font-size: .8rem; font-weight: 600; vertical-align: middle; }
+  .reason-win { background: #238636; color: #fff; }
+  .reason-forfeit { background: #da3633; color: #fff; }
+  .reason-illegal_move { background: #bd561d; color: #fff; }
+  .reason-draw { background: #6e7681; color: #fff; }
+  .reason-max_turns { background: #6e40c9; color: #fff; }
+
+  /* Turn groups */
+  .turn-group { margin-bottom: 1rem; }
+  .turn-header { display: flex; align-items: center; gap: .75rem; padding: .4rem 0;
+                 border-bottom: 1px solid var(--border); margin-bottom: .5rem;
+                 cursor: pointer; user-select: none; }
+  .turn-header:hover { color: var(--accent); }
+  .turn-header .arrow { font-size: .7rem; transition: transform .15s; }
+  .turn-header .arrow.collapsed { transform: rotate(-90deg); }
+  .turn-number { font-weight: 700; font-size: .9rem; }
+  .player-tag { font-size: .75rem; padding: .1rem .4rem; border-radius: 3px; font-weight: 600; }
+  .player-0 { background: rgba(88,166,255,.2); color: var(--p0); }
+  .player-1 { background: rgba(210,168,255,.2); color: var(--p1); }
+  .turn-summary { font-size: .85rem; color: var(--muted); }
+  .turn-outcome { font-size: .75rem; padding: .05rem .35rem; border-radius: 3px; }
+  .outcome-normal { background: transparent; color: var(--muted); }
+  .outcome-win { background: #238636; color: #fff; }
+  .outcome-illegal_move { background: #bd561d; color: #fff; }
+  .outcome-forfeit { background: #da3633; color: #fff; }
+  .outcome-draw { background: #6e7681; color: #fff; }
+
+  /* Events */
+  .events-list { padding-left: 1.25rem; border-left: 2px solid var(--border); margin-left: .5rem; }
+  .events-list.hidden { display: none; }
+  .event { margin-bottom: .5rem; padding: .5rem .75rem; background: var(--surface);
+           border: 1px solid var(--border); border-radius: 4px; font-size: .85rem; }
+
+  .event-llm { border-left: 3px solid var(--yellow); }
+  .event-llm .label { color: var(--yellow); font-weight: 600; font-size: .75rem; text-transform: uppercase;
+                      letter-spacing: .03em; margin-bottom: .2rem; }
+  .event-llm .model { color: var(--muted); font-size: .75rem; }
+  .event-llm .text { white-space: pre-wrap; margin-top: .3rem; }
+  .event-llm .tokens { color: var(--muted); font-size: .75rem; margin-top: .2rem; }
+
+  .event-tool { border-left: 3px solid var(--green); }
+  .event-tool.error { border-left-color: var(--red); }
+  .event-tool .tool-name { font-weight: 700; color: var(--accent); font-family: monospace; }
+  .event-tool .tool-args { color: var(--muted); font-family: monospace; font-size: .8rem; }
+  .event-tool .result { margin-top: .25rem; }
+  .event-tool .result-ok { color: var(--green); }
+  .event-tool .result-fail { color: var(--red); }
+  .event-tool .board { color: var(--muted); font-size: .75rem; font-family: monospace; margin-top: .15rem; }
+  .event-tool .badge { display: inline-block; font-size: .7rem; padding: 0 .3rem;
+                       border-radius: 2px; margin-left: .3rem; font-weight: 600; }
+  .badge-win { background: #238636; color: #fff; }
+  .badge-illegal { background: #bd561d; color: #fff; }
+  .badge-forfeit { background: #da3633; color: #fff; }
+
+  #status { color: var(--muted); }
+  .error-msg { color: var(--red); }
+</style>
+</head>
+<body>
+<a class="back" href="index.html">&larr; All games</a>
+<div id="status">Loading game&hellip;</div>
+<div id="content" style="display:none"></div>
+
+<script src="config.js"></script>
+<script>
+(function () {
+  const params  = new URLSearchParams(window.location.search);
+  const gameId  = params.get("id");
+  const status  = document.getElementById("status");
+  const content = document.getElementById("content");
+
+  if (!gameId) { status.innerHTML = '<span class="error-msg">No game id in URL. Use ?id=N</span>'; return; }
+
+  document.title = `Game #${gameId} \u2014 Chutes & Ladders Bench`;
+
+  function esc(s) { const d = document.createElement("span"); d.textContent = s; return d.innerHTML; }
+
+  fetch(`${DATA_BASE_URL}/events/${gameId}.json`)
+    .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+    .then(data => {
+      status.style.display = "none";
+      content.style.display = "";
+      renderGame(data);
+    })
+    .catch(err => {
+      status.innerHTML = `<span class="error-msg">Failed to load game: ${esc(err.message)}</span>`;
+    });
+
+  function renderGame(data) {
+    const g = data.game;
+    const winner = g.winner || "\u2014";
+
+    // Header
+    const header = document.createElement("div");
+    header.className = "game-header";
+    header.innerHTML =
+      `<h1>Game #${g.id}: ${esc(g.player_a)} vs ${esc(g.player_b)}</h1>` +
+      `<div class="meta">` +
+        `<span>Winner: <strong>${esc(winner)}</strong></span>` +
+        `<span><span class="reason-badge reason-${g.reason}">${g.reason}</span></span>` +
+        `<span>Turns: ${g.turns}</span>` +
+        (g.created_at ? `<span>${esc(g.created_at.replace("T"," ").slice(0,19))}</span>` : "") +
+      `</div>`;
+    content.appendChild(header);
+
+    // Players legend
+    const players = [g.player_a, g.player_b];
+
+    // Group events by turn
+    const turnMap = {};
+    for (const t of (data.turns || [])) {
+      turnMap[t.turn_number] = t;
+    }
+
+    const eventsByTurn = {};
+    for (const e of data.events) {
+      const tn = e.turn_number;
+      if (!eventsByTurn[tn]) eventsByTurn[tn] = [];
+      eventsByTurn[tn].push(e);
+    }
+
+    const turnNumbers = Object.keys(eventsByTurn).map(Number).sort((a, b) => a - b);
+
+    for (const tn of turnNumbers) {
+      const turn = turnMap[tn] || {};
+      const events = eventsByTurn[tn];
+      const pidx = turn.player_idx != null ? turn.player_idx : (events[0] ? events[0].player_idx : 0);
+      const playerName = players[pidx] || `Player ${pidx}`;
+
+      const group = document.createElement("div");
+      group.className = "turn-group";
+
+      // Turn header (collapsible)
+      const hdr = document.createElement("div");
+      hdr.className = "turn-header";
+
+      const arrow = document.createElement("span");
+      arrow.className = "arrow";
+      arrow.textContent = "\u25BC";
+
+      const tnSpan = document.createElement("span");
+      tnSpan.className = "turn-number";
+      tnSpan.textContent = `Turn ${tn}`;
+
+      const tag = document.createElement("span");
+      tag.className = `player-tag player-${pidx}`;
+      tag.textContent = playerName;
+
+      hdr.appendChild(arrow);
+      hdr.appendChild(tnSpan);
+      hdr.appendChild(tag);
+
+      // Turn summary
+      if (turn.outcome) {
+        const summ = document.createElement("span");
+        summ.className = "turn-summary";
+        const parts = [];
+        if (turn.spin_value != null) parts.push(`spin ${turn.spin_value}`);
+        parts.push(`${turn.start_position} \u2192 ${turn.end_position}`);
+        summ.textContent = parts.join(", ");
+        hdr.appendChild(summ);
+
+        if (turn.outcome !== "normal") {
+          const badge = document.createElement("span");
+          badge.className = `turn-outcome outcome-${turn.outcome}`;
+          badge.textContent = turn.outcome;
+          hdr.appendChild(badge);
+        }
+      }
+
+      group.appendChild(hdr);
+
+      // Events list
+      const list = document.createElement("div");
+      list.className = "events-list";
+
+      for (const evt of events) {
+        const div = document.createElement("div");
+        if (evt.type === "llm_response") {
+          div.className = "event event-llm";
+          div.innerHTML =
+            `<div class="label">LLM Response <span class="model">${esc(evt.model)}</span></div>` +
+            `<div class="text">${esc(evt.text)}</div>` +
+            (evt.input_tokens || evt.output_tokens || evt.latency_ms
+              ? `<div class="tokens">${[
+                  evt.input_tokens != null ? `in: ${evt.input_tokens}` : null,
+                  evt.output_tokens != null ? `out: ${evt.output_tokens}` : null,
+                  evt.latency_ms != null ? `${evt.latency_ms}ms` : null,
+                ].filter(Boolean).join(" | ")}</div>`
+              : "");
+        } else {
+          const ok = evt.result_ok;
+          div.className = `event event-tool${ok ? "" : " error"}`;
+          const argsStr = Object.keys(evt.tool_args || {}).length
+            ? `(${JSON.stringify(evt.tool_args)})`
+            : "()";
+          let badges = "";
+          if (evt.is_winning_move) badges += '<span class="badge badge-win">WIN</span>';
+          if (evt.is_illegal) badges += '<span class="badge badge-illegal">ILLEGAL</span>';
+          if (evt.is_forfeit) badges += '<span class="badge badge-forfeit">FORFEIT</span>';
+
+          div.innerHTML =
+            `<span class="tool-name">${esc(evt.tool_name)}</span>` +
+            `<span class="tool-args">${esc(argsStr)}</span>${badges}` +
+            `<div class="result ${ok ? "result-ok" : "result-fail"}">${ok ? "\u2713" : "\u2717"} ${esc(evt.result_message)}</div>` +
+            `<div class="board">board: ${JSON.stringify(evt.board_before)} \u2192 ${JSON.stringify(evt.board_after)}</div>`;
+        }
+        list.appendChild(div);
+      }
+
+      group.appendChild(list);
+      content.appendChild(group);
+
+      // Toggle collapse
+      hdr.addEventListener("click", () => {
+        const hidden = list.classList.toggle("hidden");
+        arrow.classList.toggle("collapsed", hidden);
+      });
+    }
+  }
+})();
+</script>
+</body>
+</html>

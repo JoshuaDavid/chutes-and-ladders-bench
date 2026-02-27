@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chutes &amp; Ladders Bench &mdash; Games</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         background: var(--bg); color: var(--text); line-height: 1.5; padding: 2rem; }
+  h1 { margin-bottom: .25rem; }
+  .subtitle { color: var(--muted); margin-bottom: 1.5rem; }
+  #status { color: var(--muted); margin-bottom: 1rem; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface);
+          border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  th, td { padding: .6rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--bg); color: var(--muted); font-weight: 600; font-size: .85rem;
+       text-transform: uppercase; letter-spacing: .04em; cursor: pointer; user-select: none; }
+  th:hover { color: var(--accent); }
+  th.sorted-asc::after { content: " \25B2"; }
+  th.sorted-desc::after { content: " \25BC"; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1c2128; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .reason { display: inline-block; padding: .1rem .5rem; border-radius: 3px;
+            font-size: .8rem; font-weight: 500; }
+  .reason-win { background: #238636; color: #fff; }
+  .reason-forfeit { background: #da3633; color: #fff; }
+  .reason-illegal_move { background: #bd561d; color: #fff; }
+  .reason-draw { background: #6e7681; color: #fff; }
+  .reason-max_turns { background: #6e40c9; color: #fff; }
+  .error { color: var(--red); }
+</style>
+</head>
+<body>
+<h1>Chutes &amp; Ladders Bench</h1>
+<p class="subtitle">Game log browser</p>
+<div id="status">Loading games&hellip;</div>
+<table id="games" style="display:none">
+  <thead>
+    <tr>
+      <th data-key="id">#</th>
+      <th data-key="player_a">Player A</th>
+      <th data-key="player_b">Player B</th>
+      <th data-key="winner">Winner</th>
+      <th data-key="reason">Result</th>
+      <th data-key="turns">Turns</th>
+      <th data-key="created_at">Date</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script src="config.js"></script>
+<script>
+(function () {
+  const status = document.getElementById("status");
+  const table  = document.getElementById("games");
+  const tbody  = table.querySelector("tbody");
+
+  let games = [];
+  let sortKey = "id";
+  let sortAsc = false;   // newest first by default
+
+  function render() {
+    const sorted = [...games].sort((a, b) => {
+      let va = a[sortKey], vb = b[sortKey];
+      if (va == null) va = "";
+      if (vb == null) vb = "";
+      if (typeof va === "number") return sortAsc ? va - vb : vb - va;
+      return sortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+    });
+
+    tbody.innerHTML = "";
+    for (const g of sorted) {
+      const tr = document.createElement("tr");
+      const winner = g.winner || "\u2014";
+      const date = g.created_at ? g.created_at.replace("T", " ").slice(0, 19) : "";
+      tr.innerHTML =
+        `<td><a href="game.html?id=${g.id}">${g.id}</a></td>` +
+        `<td>${esc(g.player_a)}</td>` +
+        `<td>${esc(g.player_b)}</td>` +
+        `<td>${esc(winner)}</td>` +
+        `<td><span class="reason reason-${g.reason}">${g.reason}</span></td>` +
+        `<td>${g.turns}</td>` +
+        `<td>${esc(date)}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function esc(s) { const d = document.createElement("span"); d.textContent = s; return d.innerHTML; }
+
+  // Sortable headers
+  table.querySelectorAll("th[data-key]").forEach(th => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.key;
+      if (sortKey === key) { sortAsc = !sortAsc; } else { sortKey = key; sortAsc = true; }
+      table.querySelectorAll("th").forEach(h => h.classList.remove("sorted-asc", "sorted-desc"));
+      th.classList.add(sortAsc ? "sorted-asc" : "sorted-desc");
+      render();
+    });
+  });
+
+  fetch(DATA_BASE_URL + "/games.json")
+    .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+    .then(data => {
+      games = data;
+      status.textContent = `${games.length} game(s) loaded.`;
+      table.style.display = "";
+      // Default sort: id descending
+      const idTh = table.querySelector('th[data-key="id"]');
+      if (idTh) idTh.classList.add("sorted-desc");
+      render();
+    })
+    .catch(err => {
+      status.innerHTML = `<span class="error">Failed to load games: ${esc(err.message)}</span>`;
+    });
+})();
+</script>
+</body>
+</html>
