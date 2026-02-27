@@ -345,7 +345,7 @@ def test_stall_with_messages():
 def test_double_spin():
     board, phase = _turn(0, 4)
     r = validate_action(board, 0, "spin_spinner", {}, phase)
-    assert not r.ok and r.illegal
+    assert not r.ok
 
 
 def test_move_without_spin():
@@ -353,7 +353,7 @@ def test_move_without_spin():
     phase = TurnPhase(start_position=10)
     # has_spun is False by default
     r = validate_action(board, 0, "move_pawn_to_square", {"square": 14}, phase)
-    assert not r.ok and r.illegal
+    assert not r.ok
 
 
 def test_move_after_reaching_final():
@@ -362,7 +362,7 @@ def test_move_after_reaching_final():
     r1 = validate_action(board, 0, "move_pawn_to_square", {"square": 22}, phase)
     assert r1.ok
     r2 = validate_action(board, 0, "move_pawn_to_square", {"square": 23}, phase)
-    assert not r2.ok and r2.illegal
+    assert not r2.ok
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -372,7 +372,7 @@ def test_move_after_reaching_final():
 def test_accept_draw_when_none_offered():
     board, phase = _turn(20, 2)
     r = validate_action(board, 0, "accept_draw", {}, phase)
-    assert not r.ok and r.illegal
+    assert not r.ok
 
 
 def test_forfeit_is_always_legal():
@@ -466,7 +466,7 @@ def assert_illegal_at(start: int, spin_val: int, *actions: Action) -> None:
         assert r.ok, f"Step {i} ({tool} {args}) should be legal: {r.message}"
     tool, args = actions[-1]
     r = validate_action(board, 0, tool, args, phase)
-    assert not r.ok and r.illegal, (
+    assert not r.ok, (
         f"Last action ({tool} {args}) should be illegal, got ok={r.ok}: {r.message}"
     )
 
