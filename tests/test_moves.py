@@ -223,15 +223,26 @@ def test_messages_between_moves():
 
 def test_message_before_spin_then_continue():
     """send_message is legal even before spinning."""
+    import random
+    random.seed(42)  # make spin deterministic
     board, phase = _turn(20, 2)
     # un-spin so we can test message before spin
     phase.has_spun = False
     phase.spin_value = None
-    results = _play(board, phase, msg("hello"), spin(), move(22), END)
-    # spin result is random, so this only works if spin gives exactly 2
-    # Instead, re-set spin after the spin action
-    # This test validates messages don't break the flow — we just check no errors
-    # (the spin is random so we skip end-state assertion)
+    # send_message should succeed before spinning
+    results = _play(board, phase, msg("hello"))
+    assert results[0].ok
+    # now spin and move based on actual spin value
+    spin_result = validate_action(board, 0, "spin_spinner", {}, phase)
+    assert spin_result.ok
+    landing = 20 + spin_result.spin_value
+    dest = CHUTES_LADDERS.get(landing, landing)
+    if dest > landing:
+        results = _play(board, phase, move(landing), ladder(dest), END)
+    elif dest < landing:
+        results = _play(board, phase, move(landing), chute(dest), END)
+    else:
+        results = _play(board, phase, move(landing), END)
 
 
 # ═══════════════════════════════════════════════════════════════════════
