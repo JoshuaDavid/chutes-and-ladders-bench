@@ -19,6 +19,9 @@ class Player(Protocol):
     @property
     def name(self) -> str: ...
 
+    @property
+    def last_invocation(self) -> LLMInvocation | None: ...
+
     def next_action(self, observation: str) -> tuple[str, dict]: ...
 
     def observe(self, message: str) -> None: ...
@@ -99,8 +102,7 @@ class GameRunner:
                 self.board, player_idx, tool_name, args, phase,
             )
 
-            # Capture invocation if the player exposes it
-            invocation = getattr(player, "last_invocation", None)
+            invocation = player.last_invocation
 
             # Build enriched log entry
             log_entry: dict = {
@@ -116,11 +118,12 @@ class GameRunner:
                 "is_forfeit": result.forfeit,
                 "is_turn_over": result.turn_over,
             }
+            if result.spin_value is not None:
+                log_entry["spin_value"] = result.spin_value
             if invocation is not None:
                 log_entry["invocation"] = invocation
 
             if not result.ok:
-                # Board doesn't change on illegal move
                 log_entry["board_after"] = board_before
                 self.log.append(log_entry)
                 return GameResult(winner=opponent_idx, reason="illegal_move")
@@ -138,20 +141,17 @@ class GameRunner:
             if tool_name == "offer_draw":
                 self.draw_offered_by = player_idx
 
-            if result.won:
-                self.board.positions[player_idx] = phase.current_position or 100
-                log_entry["board_after"] = list(self.board.positions)
-                self.log.append(log_entry)
-                return GameResult(winner=player_idx, reason="win")
-
-            if result.turn_over:
+            # Commit board position on turn-ending actions (won or end_turn)
+            if result.won or result.turn_over:
                 if phase.current_position is not None:
                     self.board.positions[player_idx] = phase.current_position
                 log_entry["board_after"] = list(self.board.positions)
                 self.log.append(log_entry)
-                break
+                if result.won:
+                    return GameResult(winner=player_idx, reason="win")
+                break  # turn_over
 
-            # Mid-turn action (spin, move, etc.) — board hasn't been committed yet
+            # Mid-turn action (spin, move, etc.) — board not committed yet
             log_entry["board_after"] = board_before
             self.log.append(log_entry)
 

@@ -99,6 +99,7 @@ def test_persist_game_log_multi_action_turn():
             "result_ok": True, "result_message": "You spun a 3.",
             "is_winning_move": False, "is_illegal": False,
             "is_forfeit": False, "is_turn_over": False,
+            "spin_value": 3,
         },
         {
             "turn_number": 1, "player": 0,

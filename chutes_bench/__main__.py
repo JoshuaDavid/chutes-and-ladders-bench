@@ -46,13 +46,8 @@ def _persist_game_log(
         outcome = "normal"
 
         for e in entries:
-            if e["tool"] == "spin_spinner" and e["result_ok"]:
-                # Extract spin value from result message: "You spun a N."
-                msg = e["result_message"]
-                try:
-                    spin_value = int(msg.split()[-1].rstrip("."))
-                except (ValueError, IndexError):
-                    pass
+            if "spin_value" in e:
+                spin_value = e["spin_value"]
             if e.get("is_winning_move"):
                 outcome = "win"
             elif e.get("is_illegal"):

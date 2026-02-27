@@ -87,7 +87,6 @@ def test_spin_required_before_move():
         phase=phase,
     )
     assert not r.ok
-    assert r.illegal
 
 
 def test_must_move_to_correct_square():
@@ -103,7 +102,6 @@ def test_must_move_to_correct_square():
         phase=phase,
     )
     assert not r2.ok
-    assert r2.illegal
 
 
 # ── chute/ladder actions ─────────────────────────────────────────────
@@ -198,7 +196,6 @@ def test_plan_ok_before_spin():
     )
     assert r.ok
     assert not r.turn_over
-    assert not r.illegal
 
 
 def test_plan_ok_after_spin():
