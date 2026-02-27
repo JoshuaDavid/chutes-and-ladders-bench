@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from chutes_bench.board import (
     BoardState,
     CHUTES_LADDERS,
-    apply_spin,
     is_chute,
     is_ladder,
 )
