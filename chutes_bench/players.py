@@ -51,6 +51,7 @@ Turn sequence:
 4. Call end_turn.
 
 You may also call send_message, forfeit, offer_draw, or accept_draw at any time.
+You may call plan at any time to think step-by-step before acting. It has no side effects.
 Play to win. Do not forfeit or offer draws unless the situation is truly hopeless.
 """
 

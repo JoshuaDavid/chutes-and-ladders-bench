@@ -67,17 +67,27 @@
 
   .event-tool { border-left: 3px solid var(--green); }
   .event-tool.error { border-left-color: var(--red); }
+  .event-tool.event-plan { border-left-color: #8b949e; opacity: .85; }
   .event-tool .tool-name { font-weight: 700; color: var(--accent); font-family: monospace; }
   .event-tool .tool-args { color: var(--muted); font-family: monospace; font-size: .8rem; }
   .event-tool .result { margin-top: .25rem; }
   .event-tool .result-ok { color: var(--green); }
   .event-tool .result-fail { color: var(--red); }
   .event-tool .board { color: var(--muted); font-size: .75rem; font-family: monospace; margin-top: .15rem; }
+  .event-plan .thought { white-space: pre-wrap; color: var(--muted); font-style: italic;
+                         margin-top: .25rem; font-size: .8rem; }
   .event-tool .badge { display: inline-block; font-size: .7rem; padding: 0 .3rem;
                        border-radius: 2px; margin-left: .3rem; font-weight: 600; }
   .badge-win { background: #238636; color: #fff; }
   .badge-illegal { background: #bd561d; color: #fff; }
   .badge-forfeit { background: #da3633; color: #fff; }
+
+  .token-summary { display: flex; gap: 2rem; margin-top: .6rem; font-size: .85rem; }
+  .token-summary .player-tokens { background: rgba(255,255,255,.05); padding: .4rem .75rem;
+                                   border-radius: 4px; border: 1px solid var(--border); }
+  .token-summary .player-tokens .label { font-weight: 600; font-size: .75rem; text-transform: uppercase;
+                                          letter-spacing: .03em; margin-bottom: .1rem; }
+  .token-summary .player-tokens .counts { color: var(--muted); font-size: .8rem; }
 
   #status { color: var(--muted); }
   .error-msg { color: var(--red); }
@@ -120,7 +130,7 @@
     // Header
     const header = document.createElement("div");
     header.className = "game-header";
-    header.innerHTML =
+    let headerHtml =
       `<h1>Game #${g.id}: ${esc(g.player_a)} vs ${esc(g.player_b)}</h1>` +
       `<div class="meta">` +
         `<span>Winner: <strong>${esc(winner)}</strong></span>` +
@@ -128,6 +138,19 @@
         `<span>Turns: ${g.turns}</span>` +
         (g.created_at ? `<span>${esc(g.created_at.replace("T"," ").slice(0,19))}</span>` : "") +
       `</div>`;
+
+    // Token totals
+    const tt = data.token_totals;
+    if (tt) {
+      const fmtTok = (t) => `in: ${(t.input_tokens || 0).toLocaleString()} | out: ${(t.output_tokens || 0).toLocaleString()} | total: ${((t.input_tokens || 0) + (t.output_tokens || 0)).toLocaleString()}`;
+      headerHtml +=
+        `<div class="token-summary">` +
+          `<div class="player-tokens"><div class="label player-tag player-0">${esc(g.player_a)}</div><div class="counts">${fmtTok(tt.player_a)}</div></div>` +
+          `<div class="player-tokens"><div class="label player-tag player-1">${esc(g.player_b)}</div><div class="counts">${fmtTok(tt.player_b)}</div></div>` +
+        `</div>`;
+    }
+
+    header.innerHTML = headerHtml;
     content.appendChild(header);
 
     // Players legend
@@ -215,6 +238,12 @@
                   evt.latency_ms != null ? `${evt.latency_ms}ms` : null,
                 ].filter(Boolean).join(" | ")}</div>`
               : "");
+        } else if (evt.tool_name === "plan") {
+          div.className = "event event-tool event-plan";
+          const thought = (evt.tool_args || {}).thought || "";
+          div.innerHTML =
+            `<span class="tool-name">plan</span>` +
+            `<div class="thought">${esc(thought)}</div>`;
         } else {
           const ok = evt.result_ok;
           div.className = `event event-tool${ok ? "" : " error"}`;

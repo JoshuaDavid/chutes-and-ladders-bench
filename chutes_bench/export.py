@@ -81,11 +81,24 @@ def export_game_events(db_path: Path | str, game_id: int) -> dict | None:
         tc_dict["type"] = "tool_call"
         tc_by_inv.setdefault(inv_id, []).append(tc_dict)
 
+    # Accumulate per-player token totals
+    token_totals: dict[int, dict[str, int]] = {
+        0: {"input_tokens": 0, "output_tokens": 0},
+        1: {"input_tokens": 0, "output_tokens": 0},
+    }
+
     # Build flat chronological event list
     events: list[dict] = []
     for inv in inv_rows:
         inv_dict = dict(inv)
         inv_id = inv_dict["id"]
+        pidx = inv_dict["player_idx"]
+
+        # Accumulate tokens
+        if inv_dict["input_tokens"]:
+            token_totals[pidx]["input_tokens"] += inv_dict["input_tokens"]
+        if inv_dict["output_tokens"]:
+            token_totals[pidx]["output_tokens"] += inv_dict["output_tokens"]
 
         # Extract assistant text from response
         raw = inv_dict["response_raw"]
@@ -107,7 +120,15 @@ def export_game_events(db_path: Path | str, game_id: int) -> dict | None:
         for tc in tc_by_inv.get(inv_id, []):
             events.append(tc)
 
-    return {"game": game, "turns": turns, "events": events}
+    return {
+        "game": game,
+        "turns": turns,
+        "events": events,
+        "token_totals": {
+            "player_a": token_totals[0],
+            "player_b": token_totals[1],
+        },
+    }
 
 
 def _extract_response_text(response_raw: dict) -> str | None:

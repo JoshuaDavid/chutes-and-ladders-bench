@@ -27,6 +27,7 @@ def test_all_tools_present():
         "forfeit",
         "offer_draw",
         "accept_draw",
+        "plan",
     }
     assert names == expected
 
@@ -179,6 +180,51 @@ def test_send_message_ok_anytime():
     )
     assert r.ok
     assert not r.turn_over
+
+
+# ── bounce (overshoot) ───────────────────────────────────────────────
+
+# ── plan ────────────────────────────────────────────────────────────
+
+def test_plan_ok_before_spin():
+    """plan is always allowed, even before spinning."""
+    board = BoardState(positions=[10, 0])
+    phase = TurnPhase(start_position=10)
+    r = validate_action(
+        board, player=0,
+        tool_name="plan",
+        args={"thought": "I should spin first, then move forward."},
+        phase=phase,
+    )
+    assert r.ok
+    assert not r.turn_over
+    assert not r.illegal
+
+
+def test_plan_ok_after_spin():
+    """plan is allowed mid-turn after spinning."""
+    board = BoardState(positions=[10, 0])
+    phase = TurnPhase(start_position=10)
+    phase.has_spun = True
+    phase.spin_value = 3
+    r = validate_action(
+        board, player=0,
+        tool_name="plan",
+        args={"thought": "I spun 3, so I should move to 13."},
+        phase=phase,
+    )
+    assert r.ok
+    assert not r.turn_over
+
+
+def test_plan_does_not_change_turn_phase():
+    """plan must not mutate TurnPhase."""
+    board = BoardState(positions=[10, 0])
+    phase = TurnPhase(start_position=10)
+    validate_action(board, player=0, tool_name="plan", args={"thought": "hmm"}, phase=phase)
+    assert not phase.has_spun
+    assert phase.current_position is None
+    assert not phase.reached_final
 
 
 # ── bounce (overshoot) ───────────────────────────────────────────────
