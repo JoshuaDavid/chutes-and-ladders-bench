@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import os
 import time
@@ -56,16 +55,18 @@ Play to win. Do not forfeit or offer draws unless the situation is truly hopeles
 """
 
 
-# ── OpenAI-compatible player (works for OpenAI + OpenRouter) ─────────
+# ── Base class for LLM-backed players ────────────────────────────────
 
 @dataclass
-class OpenAIPlayer:
-    """Player backed by any OpenAI-compatible chat/completions API."""
+class _BaseLLMPlayer:
+    """Shared state and helpers for all LLM-backed players.
+
+    Subclasses implement next_action() and observe() with provider-specific
+    API calls and message formatting.
+    """
 
     model: str
     display_name: str
-    api_key: str | None = None
-    base_url: str | None = None
     _messages: list[dict] = field(default_factory=list, repr=False)
     _client: object = field(default=None, repr=False)
     _last_invocation: LLMInvocation | None = field(default=None, repr=False)
@@ -77,6 +78,39 @@ class OpenAIPlayer:
     @property
     def last_invocation(self) -> LLMInvocation | None:
         return self._last_invocation
+
+    def _capture_invocation(
+        self,
+        request_snapshot: list,
+        response: Any,
+        latency_ms: int,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> None:
+        """Record metadata about an LLM API call."""
+        response_dict = response.model_dump() if hasattr(response, "model_dump") else {}
+        self._last_invocation = LLMInvocation(
+            request_messages=request_snapshot,
+            response_raw=response_dict,
+            model_api_id=self.model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            latency_ms=latency_ms,
+        )
+
+    def reset(self) -> None:
+        self._messages = []
+        self._last_invocation = None
+
+
+# ── OpenAI-compatible player (works for OpenAI + OpenRouter) ─────────
+
+@dataclass
+class OpenAIPlayer(_BaseLLMPlayer):
+    """Player backed by any OpenAI-compatible chat/completions API."""
+
+    api_key: str | None = None
+    base_url: str | None = None
 
     def _get_client(self):
         if self._client is None:
@@ -105,7 +139,6 @@ class OpenAIPlayer:
                 })
         self._messages.append({"role": "user", "content": observation})
 
-        # Snapshot messages before the API call
         request_snapshot = _to_json_safe(self._messages)
 
         client = self._get_client()
@@ -119,20 +152,15 @@ class OpenAIPlayer:
         latency_ms = int((time.monotonic() - t0) * 1000)
         msg = response.choices[0].message
 
-        # Capture invocation metadata
         usage = getattr(response, "usage", None)
-        response_dict = response.model_dump() if hasattr(response, "model_dump") else {}
-        self._last_invocation = LLMInvocation(
-            request_messages=request_snapshot,
-            response_raw=response_dict,
-            model_api_id=self.model,
+        self._capture_invocation(
+            request_snapshot, response, latency_ms,
             input_tokens=getattr(usage, "prompt_tokens", None),
             output_tokens=getattr(usage, "completion_tokens", None),
-            latency_ms=latency_ms,
         )
 
-        # Append assistant message to history, keeping only the first
-        # tool call so every tool_call_id gets a corresponding response.
+        # Keep only the first tool call in history so every tool_call_id
+        # gets a corresponding tool response.
         msg_dict = msg.model_dump(exclude_none=True)
         if msg_dict.get("tool_calls") and len(msg_dict["tool_calls"]) > 1:
             msg_dict["tool_calls"] = msg_dict["tool_calls"][:1]
@@ -166,10 +194,6 @@ class OpenAIPlayer:
         # Fallback: add as user message
         self._messages.append({"role": "user", "content": message})
 
-    def reset(self) -> None:
-        self._messages = []
-        self._last_invocation = None
-
 
 # ── Anthropic player ─────────────────────────────────────────────────
 
@@ -187,23 +211,11 @@ def _openai_tools_to_anthropic(tools: list[dict]) -> list[dict]:
 
 
 @dataclass
-class AnthropicPlayer:
+class AnthropicPlayer(_BaseLLMPlayer):
     """Player backed by Anthropic's messages API."""
 
-    model: str
-    display_name: str
     api_key: str | None = None
-    _messages: list[dict] = field(default_factory=list, repr=False)
-    _client: object = field(default=None, repr=False)
-    _last_invocation: LLMInvocation | None = field(default=None, repr=False)
-
-    @property
-    def name(self) -> str:
-        return self.display_name
-
-    @property
-    def last_invocation(self) -> LLMInvocation | None:
-        return self._last_invocation
+    _last_tool_use_id: str | None = field(default=None, repr=False)
 
     def _get_client(self):
         if self._client is None:
@@ -232,7 +244,6 @@ class AnthropicPlayer:
         else:
             self._messages.append({"role": "user", "content": observation})
 
-        # Snapshot messages before the API call
         request_snapshot = _to_json_safe(self._messages)
 
         client = self._get_client()
@@ -247,20 +258,15 @@ class AnthropicPlayer:
         )
         latency_ms = int((time.monotonic() - t0) * 1000)
 
-        # Capture invocation metadata
         usage = getattr(response, "usage", None)
-        response_dict = response.model_dump() if hasattr(response, "model_dump") else {}
-        self._last_invocation = LLMInvocation(
-            request_messages=request_snapshot,
-            response_raw=response_dict,
-            model_api_id=self.model,
+        self._capture_invocation(
+            request_snapshot, response, latency_ms,
             input_tokens=getattr(usage, "input_tokens", None),
             output_tokens=getattr(usage, "output_tokens", None),
-            latency_ms=latency_ms,
         )
 
-        # Build assistant message for history, keeping only the first
-        # tool_use block so every tool_use_id gets a tool_result.
+        # Keep only the first tool_use block in history so every
+        # tool_use_id gets a tool_result.
         first_tool = None
         kept_content = []
         for block in response.content:
@@ -279,14 +285,17 @@ class AnthropicPlayer:
         return "forfeit", {}
 
     def observe(self, message: str) -> None:
+        if self._last_tool_use_id is None:
+            self._messages.append({"role": "user", "content": message})
+            return
         self._messages.append({
             "role": "user",
             "content": [{"type": "tool_result", "tool_use_id": self._last_tool_use_id, "content": message}],
         })
 
     def reset(self) -> None:
-        self._messages = []
-        self._last_invocation = None
+        super().reset()
+        self._last_tool_use_id = None
 
 
 # ── Model registry ───────────────────────────────────────────────────
