@@ -149,59 +149,38 @@ TOOL_SCHEMAS: list[dict] = [
 class TurnPhase:
     """Tracks what a player has done so far this turn.
 
-    Supports multi-step movement: a player may call move_pawn_to_square
-    multiple times to walk through intermediate squares before arriving
-    at the final resting position.
+    Pure state container — game-rule computations live in the module-level
+    _landing_square() and _final_resting_square() functions below.
     """
 
     has_spun: bool = False
     spin_value: int | None = None
-    # Populated by the game runner (or test) before validation starts
     start_position: int = 0
-    # Tracks where the pawn is right now during multi-step movement
     current_position: int | None = None  # None = hasn't moved yet
-    # Set once the pawn reaches the final valid resting position
     reached_final: bool = False
     draw_offered_to_me: bool = False
 
-    # Legacy compat — kept for game.py commit logic
-    @property
-    def has_moved(self) -> bool:
-        return self.current_position is not None
 
-    @property
-    def moved_to(self) -> int | None:
-        return self.current_position
+def _landing_square(phase: TurnPhase) -> int | None:
+    """The square the pawn lands on before any chute/ladder, or None if bounce."""
+    if phase.spin_value is None:
+        return None
+    target = phase.start_position + phase.spin_value
+    if target > 100:
+        return None  # bounce
+    return target
 
-    @property
-    def chute_or_ladder_done(self) -> bool:
-        """True if we've passed through a chute/ladder to the final dest."""
-        if not self.reached_final or self.current_position is None:
-            return False
-        landing = self._landing_square()
-        if landing is None:
-            return False
-        cl_dest = CHUTES_LADDERS.get(landing)
-        return cl_dest is not None and self.current_position == cl_dest
 
-    def _landing_square(self) -> int | None:
-        if self.spin_value is None:
-            return None
-        target = self.start_position + self.spin_value
-        if target > 100:
-            return None  # bounce
-        return target
-
-    def _final_resting_square(self) -> int | None:
-        """Where the pawn must end up this turn."""
-        landing = self._landing_square()
-        if landing is None:
-            # Bounce → stay put
-            return self.start_position if self.spin_value is not None else None
-        cl_dest = CHUTES_LADDERS.get(landing)
-        if cl_dest is not None:
-            return cl_dest
-        return landing
+def _final_resting_square(phase: TurnPhase) -> int | None:
+    """Where the pawn must end up this turn (after chute/ladder)."""
+    landing = _landing_square(phase)
+    if landing is None:
+        # Bounce → stay put
+        return phase.start_position if phase.spin_value is not None else None
+    cl_dest = CHUTES_LADDERS.get(landing)
+    if cl_dest is not None:
+        return cl_dest
+    return landing
 
 
 # ── Action result ────────────────────────────────────────────────────
@@ -292,8 +271,8 @@ def _validate_move(
     if target_square is None:
         return ActionResult(ok=False, message="Missing 'square' argument.")
 
-    landing = phase._landing_square()
-    final_resting = phase._final_resting_square()
+    landing = _landing_square(phase)
+    final_resting = _final_resting_square(phase)
     cur = phase.current_position if phase.current_position is not None else phase.start_position
 
     # ── Bounce case ──
@@ -352,7 +331,7 @@ def _validate_move(
 
 
 def _validate_ladder(args: dict, phase: TurnPhase) -> ActionResult:
-    landing = phase._landing_square()
+    landing = _landing_square(phase)
     if landing is None or phase.current_position != landing or not is_ladder(landing):
         return ActionResult(ok=False, message="No ladder to ascend.")
 
@@ -370,7 +349,7 @@ def _validate_ladder(args: dict, phase: TurnPhase) -> ActionResult:
 
 
 def _validate_chute(args: dict, phase: TurnPhase) -> ActionResult:
-    landing = phase._landing_square()
+    landing = _landing_square(phase)
     if landing is None or phase.current_position != landing or not is_chute(landing):
         return ActionResult(ok=False, message="No chute to descend.")
 
@@ -387,7 +366,7 @@ def _validate_chute(args: dict, phase: TurnPhase) -> ActionResult:
 
 
 def _validate_end_turn(phase: TurnPhase) -> ActionResult:
-    if not phase.has_moved:
+    if phase.current_position is None:
         return ActionResult(ok=False, message="You must move before ending your turn.")
     if not phase.reached_final:
         return ActionResult(
