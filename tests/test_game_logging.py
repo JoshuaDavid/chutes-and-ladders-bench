@@ -1,7 +1,7 @@
-"""RED — tests that GameRunner captures board state and invocation data in log."""
+"""RED — tests that GameRunner captures board state and invocation data via observer."""
 
 from chutes_bench.board import BoardState
-from chutes_bench.game import GameRunner, GameResult
+from chutes_bench.game import GameRunner, ListObserver, LogEntry
 from chutes_bench.invocation import LLMInvocation
 
 
@@ -40,48 +40,48 @@ class FakePlayerWithInvocation:
 
 
 def test_log_entries_have_board_state():
-    """Each tool-call log entry should include board_before and board_after."""
+    """Each log entry should include board_before and board_after."""
     p0 = FakePlayerWithInvocation([("forfeit", {})], "Alice")
     p1 = FakePlayerWithInvocation([], "Bob")
 
-    runner = GameRunner(players=[p0, p1], max_turns=10)
-    result = runner.play()
+    observer = ListObserver()
+    runner = GameRunner(players=[p0, p1], max_turns=10, observer=observer)
+    runner.play()
 
-    assert len(result.log) >= 1
-    entry = result.log[0]
-    assert "board_before" in entry
-    assert "board_after" in entry
-    assert entry["board_before"] == [0, 0]
+    assert len(observer.entries) >= 1
+    entry = observer.entries[0]
+    assert isinstance(entry, LogEntry)
+    assert entry.board_before == [0, 0]
 
 
 def test_log_entries_have_invocation():
-    """Each tool-call log entry should include the LLM invocation snapshot."""
+    """Each log entry should include the LLM invocation snapshot."""
     p0 = FakePlayerWithInvocation([("forfeit", {})], "Alice")
     p1 = FakePlayerWithInvocation([], "Bob")
 
-    runner = GameRunner(players=[p0, p1], max_turns=10)
-    result = runner.play()
+    observer = ListObserver()
+    runner = GameRunner(players=[p0, p1], max_turns=10, observer=observer)
+    runner.play()
 
-    entry = result.log[0]
-    assert "invocation" in entry
-    inv = entry["invocation"]
-    assert isinstance(inv, LLMInvocation)
-    assert inv.model_api_id == "fake-model"
-    assert inv.input_tokens == 10
+    entry = observer.entries[0]
+    assert entry.invocation is not None
+    assert isinstance(entry.invocation, LLMInvocation)
+    assert entry.invocation.model_api_id == "fake-model"
+    assert entry.invocation.input_tokens == 10
 
 
 def test_log_entries_have_result_fields():
-    """Each tool-call log entry should include validation result fields."""
+    """Each log entry should include validation result fields."""
     p0 = FakePlayerWithInvocation([("forfeit", {})], "Alice")
     p1 = FakePlayerWithInvocation([], "Bob")
 
-    runner = GameRunner(players=[p0, p1], max_turns=10)
-    result = runner.play()
+    observer = ListObserver()
+    runner = GameRunner(players=[p0, p1], max_turns=10, observer=observer)
+    runner.play()
 
-    entry = result.log[0]
-    assert "result_ok" in entry
-    assert "result_message" in entry
-    assert entry["result_ok"] is True
+    entry = observer.entries[0]
+    assert entry.result_ok is True
+    assert entry.result_message != ""
 
 
 def test_log_entries_have_turn_number():
@@ -89,9 +89,9 @@ def test_log_entries_have_turn_number():
     p0 = FakePlayerWithInvocation([("forfeit", {})], "Alice")
     p1 = FakePlayerWithInvocation([], "Bob")
 
-    runner = GameRunner(players=[p0, p1], max_turns=10)
-    result = runner.play()
+    observer = ListObserver()
+    runner = GameRunner(players=[p0, p1], max_turns=10, observer=observer)
+    runner.play()
 
-    entry = result.log[0]
-    assert "turn_number" in entry
-    assert entry["turn_number"] == 1
+    entry = observer.entries[0]
+    assert entry.turn_number == 1

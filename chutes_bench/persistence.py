@@ -11,8 +11,12 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from chutes_bench.elo import Outcome
+
+if TYPE_CHECKING:
+    from chutes_bench.game import LogEntry
 
 
 @dataclass
@@ -293,3 +297,102 @@ class ResultsDB:
 
     def close(self) -> None:
         self._conn.close()
+
+
+# ── Game log persistence ─────────────────────────────────────────────
+
+def persist_game_log(
+    db: ResultsDB,
+    game_id: int,
+    entries: list[LogEntry],
+    reason: str,
+    total_turns: int,
+) -> None:
+    """Write structured game events to the turns, llm_invocations, and tool_calls tables."""
+    from chutes_bench.invocation import LLMInvocation
+
+    # Group entries by turn_number to build turn summaries
+    turns_seen: dict[int, list[LogEntry]] = {}
+    for entry in entries:
+        turns_seen.setdefault(entry.turn_number, []).append(entry)
+
+    invocation_seq: dict[int, int] = {}  # turn_number → next sequence counter
+
+    for turn_number, turn_entries in sorted(turns_seen.items()):
+        first = turn_entries[0]
+        last = turn_entries[-1]
+        player_idx = first.player
+        start_pos = first.board_before[player_idx]
+        end_pos = last.board_after[player_idx]
+        spin_value = None
+        outcome = "normal"
+
+        for e in turn_entries:
+            if e.spin_value is not None:
+                spin_value = e.spin_value
+            if e.is_winning_move:
+                outcome = "win"
+            elif e.is_illegal:
+                outcome = "illegal_move"
+            elif e.is_forfeit:
+                outcome = "forfeit"
+
+        if reason == "draw" and turn_number == total_turns:
+            outcome = "draw"
+
+        db.record_turn(
+            game_id=game_id,
+            turn_number=turn_number,
+            player_idx=player_idx,
+            start_position=start_pos,
+            end_position=end_pos,
+            spin_value=spin_value,
+            outcome=outcome,
+            actions_count=len(turn_entries),
+        )
+
+        for entry in turn_entries:
+            seq = invocation_seq.get(turn_number, 0)
+            invocation_seq[turn_number] = seq + 1
+
+            inv: LLMInvocation | None = entry.invocation
+            if inv is not None:
+                inv_id = db.record_llm_invocation(
+                    game_id=game_id,
+                    turn_number=turn_number,
+                    player_idx=entry.player,
+                    sequence_in_turn=seq,
+                    model_api_id=inv.model_api_id,
+                    request_messages=inv.request_messages,
+                    response_raw=inv.response_raw,
+                    input_tokens=inv.input_tokens,
+                    output_tokens=inv.output_tokens,
+                    latency_ms=inv.latency_ms,
+                )
+            else:
+                inv_id = db.record_llm_invocation(
+                    game_id=game_id,
+                    turn_number=turn_number,
+                    player_idx=entry.player,
+                    sequence_in_turn=seq,
+                    model_api_id="unknown",
+                    request_messages=[],
+                    response_raw={},
+                )
+
+            db.record_tool_call(
+                invocation_id=inv_id,
+                game_id=game_id,
+                turn_number=turn_number,
+                player_idx=entry.player,
+                tool_name=entry.tool,
+                tool_args=entry.args,
+                result_ok=entry.result_ok,
+                result_message=entry.result_message,
+                board_before=entry.board_before,
+                board_after=entry.board_after,
+                is_winning_move=entry.is_winning_move,
+                is_illegal=entry.is_illegal,
+                is_forfeit=entry.is_forfeit,
+                is_turn_over=entry.is_turn_over,
+            )

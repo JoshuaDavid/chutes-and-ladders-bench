@@ -1,16 +1,14 @@
-"""Tests for _persist_game_log end-to-end wiring."""
+"""Tests for persist_game_log end-to-end wiring."""
 
 from __future__ import annotations
 
 import sqlite3
-import json
 import tempfile
 from pathlib import Path
 
-from chutes_bench.game import GameResult
+from chutes_bench.game import LogEntry
 from chutes_bench.invocation import LLMInvocation
-from chutes_bench.persistence import ResultsDB
-from chutes_bench.__main__ import _persist_game_log
+from chutes_bench.persistence import ResultsDB, persist_game_log
 
 
 def _make_db() -> tuple[ResultsDB, Path]:
@@ -38,30 +36,22 @@ def test_persist_game_log_writes_all_tables():
         latency_ms=100,
     )
 
-    result = GameResult(
-        winner=1,
-        reason="forfeit",
-        turns=1,
-        log=[
-            {
-                "turn_number": 1,
-                "player": 0,
-                "tool": "forfeit",
-                "args": {},
-                "board_before": [0, 0],
-                "board_after": [0, 0],
-                "result_ok": True,
-                "result_message": "Player forfeits.",
-                "is_winning_move": False,
-                "is_illegal": False,
-                "is_forfeit": True,
-                "is_turn_over": False,
-                "invocation": inv,
-            }
-        ],
-    )
+    entries = [
+        LogEntry(
+            turn_number=1,
+            player=0,
+            tool="forfeit",
+            args={},
+            board_before=[0, 0],
+            board_after=[0, 0],
+            result_ok=True,
+            result_message="Player forfeits.",
+            is_forfeit=True,
+            invocation=inv,
+        ),
+    ]
 
-    _persist_game_log(db, game_id, result)
+    persist_game_log(db, game_id, entries, reason="forfeit", total_turns=1)
 
     conn = sqlite3.connect(path)
 
@@ -91,36 +81,30 @@ def test_persist_game_log_multi_action_turn():
         max_turns_limit=1, system_prompt="test",
     )
 
-    log = [
-        {
-            "turn_number": 1, "player": 0,
-            "tool": "spin_spinner", "args": {},
-            "board_before": [0, 0], "board_after": [0, 0],
-            "result_ok": True, "result_message": "You spun a 3.",
-            "is_winning_move": False, "is_illegal": False,
-            "is_forfeit": False, "is_turn_over": False,
-            "spin_value": 3,
-        },
-        {
-            "turn_number": 1, "player": 0,
-            "tool": "move_pawn_to_square", "args": {"square": 3},
-            "board_before": [0, 0], "board_after": [0, 0],
-            "result_ok": True, "result_message": "Moved to 3.",
-            "is_winning_move": False, "is_illegal": False,
-            "is_forfeit": False, "is_turn_over": False,
-        },
-        {
-            "turn_number": 1, "player": 0,
-            "tool": "end_turn", "args": {},
-            "board_before": [0, 0], "board_after": [3, 0],
-            "result_ok": True, "result_message": "Turn over.",
-            "is_winning_move": False, "is_illegal": False,
-            "is_forfeit": False, "is_turn_over": True,
-        },
+    entries = [
+        LogEntry(
+            turn_number=1, player=0,
+            tool="spin_spinner", args={},
+            board_before=[0, 0], board_after=[0, 0],
+            result_ok=True, result_message="You spun a 3.",
+            spin_value=3,
+        ),
+        LogEntry(
+            turn_number=1, player=0,
+            tool="move_pawn_to_square", args={"square": 3},
+            board_before=[0, 0], board_after=[0, 0],
+            result_ok=True, result_message="Moved to 3.",
+        ),
+        LogEntry(
+            turn_number=1, player=0,
+            tool="end_turn", args={},
+            board_before=[0, 0], board_after=[3, 0],
+            result_ok=True, result_message="Turn over.",
+            is_turn_over=True,
+        ),
     ]
 
-    result = GameResult(winner=None, reason="max_turns", turns=1, log=log)
-    _persist_game_log(db, game_id, result)
+    persist_game_log(db, game_id, entries, reason="max_turns", total_turns=1)
 
     conn = sqlite3.connect(path)
     turns = conn.execute("SELECT * FROM turns WHERE game_id = ?", (game_id,)).fetchall()
