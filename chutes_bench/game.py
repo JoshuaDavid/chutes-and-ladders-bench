@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from chutes_bench.board import BoardState, CHUTES_LADDERS
+from chutes_bench.invocation import LLMInvocation
 from chutes_bench.tools import TurnPhase, validate_action, ActionResult
 
 
@@ -53,27 +54,28 @@ class GameRunner:
         self.board = board or BoardState()
         self.log: list[dict] = []
         self.draw_offered_by: int | None = None
+        self._turn_number = 0
 
     def play(self) -> GameResult:
-        turns = 0
+        self._turn_number = 0
 
-        while turns < self.max_turns:
+        while self._turn_number < self.max_turns:
             for player_idx in range(2):
                 result = self._play_turn(player_idx)
-                turns += 1
+                self._turn_number += 1
 
                 if result is not None:
-                    result.turns = turns
+                    result.turns = self._turn_number
                     result.log = self.log
                     return result
 
-                if turns >= self.max_turns:
+                if self._turn_number >= self.max_turns:
                     return GameResult(
                         winner=None, reason="max_turns",
-                        turns=turns, log=self.log,
+                        turns=self._turn_number, log=self.log,
                     )
 
-        return GameResult(winner=None, reason="max_turns", turns=turns, log=self.log)
+        return GameResult(winner=None, reason="max_turns", turns=self._turn_number, log=self.log)
 
     def _play_turn(self, player_idx: int) -> GameResult | None:
         """Run one player's full turn. Returns GameResult if game ends."""
@@ -85,28 +87,52 @@ class GameRunner:
             phase.draw_offered_to_me = True
 
         observation = self._make_observation(player_idx)
+        turn_number = self._turn_number + 1  # 1-indexed for log entries
 
         for _ in range(MAX_ACTIONS_PER_TURN):
             tool_name, args = player.next_action(observation)
 
-            self.log.append({
-                "player": player_idx,
-                "tool": tool_name,
-                "args": args,
-            })
+            # Capture board state before validation
+            board_before = list(self.board.positions)
 
             result = validate_action(
                 self.board, player_idx, tool_name, args, phase,
             )
 
+            # Capture invocation if the player exposes it
+            invocation = getattr(player, "last_invocation", None)
+
+            # Build enriched log entry
+            log_entry: dict = {
+                "turn_number": turn_number,
+                "player": player_idx,
+                "tool": tool_name,
+                "args": args,
+                "board_before": board_before,
+                "result_ok": result.ok,
+                "result_message": result.message,
+                "is_winning_move": result.won,
+                "is_illegal": not result.ok,
+                "is_forfeit": result.forfeit,
+                "is_turn_over": result.turn_over,
+            }
+            if invocation is not None:
+                log_entry["invocation"] = invocation
+
             if not result.ok:
-                self.log.append({"event": "illegal_move", "player": player_idx, "msg": result.message})
+                # Board doesn't change on illegal move
+                log_entry["board_after"] = board_before
+                self.log.append(log_entry)
                 return GameResult(winner=opponent_idx, reason="illegal_move")
 
             if result.forfeit:
+                log_entry["board_after"] = board_before
+                self.log.append(log_entry)
                 return GameResult(winner=opponent_idx, reason="forfeit")
 
             if result.draw:
+                log_entry["board_after"] = board_before
+                self.log.append(log_entry)
                 return GameResult(winner=None, reason="draw")
 
             if tool_name == "offer_draw":
@@ -114,12 +140,20 @@ class GameRunner:
 
             if result.won:
                 self.board.positions[player_idx] = phase.current_position or 100
+                log_entry["board_after"] = list(self.board.positions)
+                self.log.append(log_entry)
                 return GameResult(winner=player_idx, reason="win")
 
             if result.turn_over:
                 if phase.current_position is not None:
                     self.board.positions[player_idx] = phase.current_position
+                log_entry["board_after"] = list(self.board.positions)
+                self.log.append(log_entry)
                 break
+
+            # Mid-turn action (spin, move, etc.) — board hasn't been committed yet
+            log_entry["board_after"] = board_before
+            self.log.append(log_entry)
 
             observation = result.message
             player.observe(result.message)
