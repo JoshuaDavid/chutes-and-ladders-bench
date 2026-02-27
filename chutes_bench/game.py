@@ -19,6 +19,9 @@ class Player(Protocol):
     @property
     def name(self) -> str: ...
 
+    @property
+    def last_invocation(self) -> LLMInvocation | None: ...
+
     def next_action(self, observation: str) -> tuple[str, dict]: ...
 
     def observe(self, message: str) -> None: ...
@@ -99,8 +102,7 @@ class GameRunner:
                 self.board, player_idx, tool_name, args, phase,
             )
 
-            # Capture invocation if the player exposes it
-            invocation = getattr(player, "last_invocation", None)
+            invocation = player.last_invocation
 
             # Build enriched log entry
             log_entry: dict = {

@@ -16,6 +16,10 @@ class FakePlayer:
     def name(self) -> str:
         return self._name
 
+    @property
+    def last_invocation(self):
+        return None
+
     def next_action(self, observation: str) -> tuple[str, dict]:
         action = self.script[self._idx]
         self._idx += 1

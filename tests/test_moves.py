@@ -482,6 +482,10 @@ def _make_fake_player(name: str, next_action_fn):
         def name(self) -> str:
             return self._name
 
+        @property
+        def last_invocation(self):
+            return None
+
         def next_action(self, observation: str) -> tuple[str, dict]:
             return next_action_fn(observation)
 
