@@ -87,15 +87,37 @@ uv run python -m chutes_bench elo
 uv run python -m chutes_bench chart
 ```
 
-Results are stored in `results/benchmark.db` (SQLite). You can stop and
-restart `run` at any time — it picks up where it left off.
+Results are stored in `results/benchmark.db` (SQLite, gitignored). You can
+stop and restart `run` at any time — it picks up where it left off.
+
+### Results database
+
+The database is stored in Backblaze B2 (not in git — it's ~4 MB/game).
+
+```bash
+# Download the latest results
+python scripts/download_db.py
+
+# Upload after running new games (requires B2 credentials)
+python scripts/upload_db.py
+```
+
+The DB contains detailed transcripts for every game: full LLM
+request/response payloads, tool calls with validation results, board state
+snapshots, and token usage. See [Database schema](#database-schema) below.
 
 ### Environment variables
 
 ```
+# LLM providers (required for running games)
 OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
 OPENROUTER_API_KEY=...
+
+# Backblaze B2 (required only for uploading results)
+BACKBLAZE_KEY_ID=...
+BACKBLAZE_APPLICATION_KEY=...
+BACKBLAZE_CHUTES_BUCKET_NAME=...
 ```
 
 ---
@@ -109,10 +131,14 @@ chutes_bench/
   tools.py          # Tool definitions and action validation
   game.py           # Game runner — orchestrates two LLM players
   players.py        # LLM player adapters (OpenAI, Anthropic, OpenRouter)
+  invocation.py     # LLMInvocation dataclass for capturing API calls
   elo.py            # Elo calculation from pairwise results
   chart.py          # Matplotlib leaderboard chart
   persistence.py    # SQLite storage for pause/resume/parallelization
   __main__.py       # CLI entry point
+scripts/
+  download_db.py    # Download benchmark.db from Backblaze B2
+  upload_db.py      # Upload benchmark.db to Backblaze B2
 tests/
   test_board.py
   test_tools.py
@@ -120,6 +146,45 @@ tests/
   test_game.py
   test_elo.py
   test_persistence.py
+  test_invocation_capture.py
+  test_detailed_persistence.py
+  test_game_logging.py
+  test_persist_game_log.py
+```
+
+---
+
+## Database schema
+
+Every game records full transcripts across these tables:
+
+| Table | Purpose |
+|---|---|
+| `models` | Model registry (api_id, display_name, provider) |
+| `games` | Game outcomes (players, winner, reason, turn count) |
+| `pairings` | Scheduled matchups for pause/resume |
+| `turns` | Per-turn summary (positions, spin value, outcome) |
+| `llm_invocations` | Every LLM API call (full request messages, raw response, tokens, latency) |
+| `tool_calls` | Every tool call (name, args, validation result, board state before/after) |
+
+Example queries:
+
+```sql
+-- Full transcript for a game
+SELECT turn_number, tool_name, tool_args, result_message, board_before, board_after
+FROM tool_calls WHERE game_id = 4 ORDER BY id;
+
+-- Token cost per model
+SELECT model_api_id, SUM(input_tokens) as total_in, SUM(output_tokens) as total_out
+FROM llm_invocations GROUP BY model_api_id;
+
+-- Illegal move rate
+SELECT model_api_id,
+       COUNT(*) FILTER (WHERE is_illegal) as illegal,
+       COUNT(*) as total
+FROM tool_calls tc
+JOIN llm_invocations li ON tc.invocation_id = li.id
+GROUP BY model_api_id;
 ```
 
 ## License
