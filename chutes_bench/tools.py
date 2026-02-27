@@ -124,6 +124,23 @@ TOOL_SCHEMAS: list[dict] = [
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "plan",
+            "description": "Think step-by-step about your next actions. This tool has no side effects — use it to reason before acting.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "thought": {
+                        "type": "string",
+                        "description": "Your internal reasoning or plan for this turn.",
+                    }
+                },
+                "required": ["thought"],
+            },
+        },
+    },
 ]
 
 
@@ -219,6 +236,9 @@ def validate_action(
     Returns an ActionResult. Mutates *phase* to track turn progress.
     Does NOT mutate *board* — the game runner commits state.
     """
+    if tool_name == "plan":
+        return ActionResult(ok=True, message=f"Plan noted.")
+
     if tool_name == "send_message":
         return ActionResult(ok=True, message=f"Message sent: {args.get('message', '')}")
 

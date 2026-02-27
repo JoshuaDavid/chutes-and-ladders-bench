@@ -229,6 +229,20 @@ def test_export_game_events_nonexistent(populated_db: Path) -> None:
     assert result is None
 
 
+def test_export_game_events_has_token_totals(populated_db: Path) -> None:
+    from chutes_bench.export import export_game_events
+
+    result = export_game_events(populated_db, game_id=1)
+    assert result is not None
+    totals = result["token_totals"]
+    # Player 0 (model-a): inv1 has 100 in + 20 out, inv2 has no tokens
+    assert totals["player_a"]["input_tokens"] == 100
+    assert totals["player_a"]["output_tokens"] == 20
+    # Player 1 (model-b): inv3 has 80 in + 15 out, inv4 has no tokens
+    assert totals["player_b"]["input_tokens"] == 80
+    assert totals["player_b"]["output_tokens"] == 15
+
+
 def test_export_game_events_json_serializable(populated_db: Path) -> None:
     from chutes_bench.export import export_game_events
 
