@@ -19,6 +19,9 @@ dev = [
     "pytest>=8",
     "pyright>=1.1",
 ]
+upload = [
+    "boto3>=1.28",
+]
 
 [tool.setuptools.packages.find]
 include = ["chutes_bench*"]

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from chutes_bench.elo import compute_elo
 from chutes_bench.chart import make_elo_chart
+from chutes_bench.export import generate_all, upload_to_b2
 from chutes_bench.game import GameRunner, GameResult
 from chutes_bench.invocation import LLMInvocation
 from chutes_bench.persistence import ResultsDB
@@ -238,6 +239,49 @@ def cmd_chart(args: argparse.Namespace) -> None:
     print(f"Chart saved to {out}")
 
 
+# ── export ────────────────────────────────────────────────────────────
+
+def cmd_export(args: argparse.Namespace) -> None:
+    """Export game data to JSON, optionally uploading to Backblaze B2."""
+    if not DB_PATH.exists():
+        print(f"No database found at {DB_PATH}. Run some games first.", file=sys.stderr)
+        sys.exit(1)
+
+    import os
+    output_dir = Path(args.output_dir)
+    generated = generate_all(DB_PATH, output_dir)
+    print(f"Generated {len(generated)} file(s) in {output_dir}/")
+
+    if args.upload:
+        bucket = os.environ.get("B2_BUCKET_NAME", "")
+        endpoint = os.environ.get("B2_ENDPOINT_URL", "")
+        key_id = os.environ.get("B2_KEY_ID", "")
+        app_key = os.environ.get("B2_APP_KEY", "")
+
+        missing = []
+        if not bucket:
+            missing.append("B2_BUCKET_NAME")
+        if not endpoint:
+            missing.append("B2_ENDPOINT_URL")
+        if not key_id:
+            missing.append("B2_KEY_ID")
+        if not app_key:
+            missing.append("B2_APP_KEY")
+        if missing:
+            print(f"Missing env vars for B2 upload: {', '.join(missing)}", file=sys.stderr)
+            sys.exit(1)
+
+        prefix = args.prefix
+        files: dict[str, bytes] = {}
+        for path in generated:
+            rel = path.relative_to(output_dir)
+            key = f"{prefix}/{rel}" if prefix else str(rel)
+            files[key] = path.read_bytes()
+
+        upload_to_b2(files, bucket, endpoint, key_id, app_key)
+        print(f"Uploaded {len(files)} file(s) to B2 bucket '{bucket}'.")
+
+
 # ── main ─────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -257,6 +301,11 @@ def main() -> None:
     p_chart = sub.add_parser("chart", help="Generate leaderboard chart")
     p_chart.add_argument("--output", "-o", help="Output PNG path")
 
+    p_export = sub.add_parser("export", help="Export game data to JSON (+ optional B2 upload)")
+    p_export.add_argument("--output-dir", "-o", default="export_data", help="Local output directory (default: export_data)")
+    p_export.add_argument("--upload", action="store_true", help="Upload to Backblaze B2 (needs B2_* env vars)")
+    p_export.add_argument("--prefix", default="data", help="Object key prefix in B2 (default: data)")
+
     args = parser.parse_args()
     if args.command == "run":
         cmd_run(args)
@@ -264,6 +313,8 @@ def main() -> None:
         cmd_elo(args)
     elif args.command == "chart":
         cmd_chart(args)
+    elif args.command == "export":
+        cmd_export(args)
     else:
         parser.print_help()
 
