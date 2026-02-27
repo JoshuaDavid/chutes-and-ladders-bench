@@ -124,7 +124,6 @@ class GameRunner:
                 log_entry["invocation"] = invocation
 
             if not result.ok:
-                # Board doesn't change on illegal move
                 log_entry["board_after"] = board_before
                 self.log.append(log_entry)
                 return GameResult(winner=opponent_idx, reason="illegal_move")
@@ -142,20 +141,17 @@ class GameRunner:
             if tool_name == "offer_draw":
                 self.draw_offered_by = player_idx
 
-            if result.won:
-                self.board.positions[player_idx] = phase.current_position or 100
-                log_entry["board_after"] = list(self.board.positions)
-                self.log.append(log_entry)
-                return GameResult(winner=player_idx, reason="win")
-
-            if result.turn_over:
+            # Commit board position on turn-ending actions (won or end_turn)
+            if result.won or result.turn_over:
                 if phase.current_position is not None:
                     self.board.positions[player_idx] = phase.current_position
                 log_entry["board_after"] = list(self.board.positions)
                 self.log.append(log_entry)
-                break
+                if result.won:
+                    return GameResult(winner=player_idx, reason="win")
+                break  # turn_over
 
-            # Mid-turn action (spin, move, etc.) — board hasn't been committed yet
+            # Mid-turn action (spin, move, etc.) — board not committed yet
             log_entry["board_after"] = board_before
             self.log.append(log_entry)
 
