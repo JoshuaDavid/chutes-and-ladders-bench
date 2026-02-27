@@ -7,10 +7,22 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from chutes_bench.board import CHUTES_LADDERS
 from chutes_bench.invocation import LLMInvocation
 from chutes_bench.tools import TOOL_SCHEMAS
+
+
+def _to_json_safe(obj: Any) -> Any:
+    """Recursively convert SDK objects (with model_dump) to plain dicts/lists."""
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if isinstance(obj, dict):
+        return {k: _to_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_json_safe(v) for v in obj]
+    return obj
 
 # ── System prompt ────────────────────────────────────────────────────
 
@@ -93,7 +105,7 @@ class OpenAIPlayer:
         self._messages.append({"role": "user", "content": observation})
 
         # Snapshot messages before the API call
-        request_snapshot = copy.deepcopy(self._messages)
+        request_snapshot = _to_json_safe(self._messages)
 
         client = self._get_client()
         t0 = time.monotonic()
@@ -220,7 +232,7 @@ class AnthropicPlayer:
             self._messages.append({"role": "user", "content": observation})
 
         # Snapshot messages before the API call
-        request_snapshot = copy.deepcopy(self._messages)
+        request_snapshot = _to_json_safe(self._messages)
 
         client = self._get_client()
         t0 = time.monotonic()
