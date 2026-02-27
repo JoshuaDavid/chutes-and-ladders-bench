@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chutes-bench"
+version = "0.1.0"
+description = "Elo benchmark: LLMs play Chutes & Ladders"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "openai>=1.0",
+    "anthropic>=0.30",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pyright>=1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
