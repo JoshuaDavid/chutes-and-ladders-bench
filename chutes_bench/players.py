@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
+import time
 from dataclasses import dataclass, field
 
 from chutes_bench.board import CHUTES_LADDERS
+from chutes_bench.invocation import LLMInvocation
 from chutes_bench.tools import TOOL_SCHEMAS
 
 # ── System prompt ────────────────────────────────────────────────────
@@ -52,10 +55,15 @@ class OpenAIPlayer:
     base_url: str | None = None
     _messages: list[dict] = field(default_factory=list, repr=False)
     _client: object = field(default=None, repr=False)
+    _last_invocation: LLMInvocation | None = field(default=None, repr=False)
 
     @property
     def name(self) -> str:
         return self.display_name
+
+    @property
+    def last_invocation(self) -> LLMInvocation | None:
+        return self._last_invocation
 
     def _get_client(self):
         if self._client is None:
@@ -84,14 +92,31 @@ class OpenAIPlayer:
                 })
         self._messages.append({"role": "user", "content": observation})
 
+        # Snapshot messages before the API call
+        request_snapshot = copy.deepcopy(self._messages)
+
         client = self._get_client()
+        t0 = time.monotonic()
         response = client.chat.completions.create(
             model=self.model,
             messages=self._messages,
             tools=TOOL_SCHEMAS,
             tool_choice="required",
         )
+        latency_ms = int((time.monotonic() - t0) * 1000)
         msg = response.choices[0].message
+
+        # Capture invocation metadata
+        usage = getattr(response, "usage", None)
+        response_dict = response.model_dump() if hasattr(response, "model_dump") else {}
+        self._last_invocation = LLMInvocation(
+            request_messages=request_snapshot,
+            response_raw=response_dict,
+            model_api_id=self.model,
+            input_tokens=getattr(usage, "prompt_tokens", None),
+            output_tokens=getattr(usage, "completion_tokens", None),
+            latency_ms=latency_ms,
+        )
 
         # Append assistant message to history, keeping only the first
         # tool call so every tool_call_id gets a corresponding response.
@@ -130,6 +155,7 @@ class OpenAIPlayer:
 
     def reset(self) -> None:
         self._messages = []
+        self._last_invocation = None
 
 
 # ── Anthropic player ─────────────────────────────────────────────────
@@ -156,10 +182,15 @@ class AnthropicPlayer:
     api_key: str | None = None
     _messages: list[dict] = field(default_factory=list, repr=False)
     _client: object = field(default=None, repr=False)
+    _last_invocation: LLMInvocation | None = field(default=None, repr=False)
 
     @property
     def name(self) -> str:
         return self.display_name
+
+    @property
+    def last_invocation(self) -> LLMInvocation | None:
+        return self._last_invocation
 
     def _get_client(self):
         if self._client is None:
@@ -188,7 +219,11 @@ class AnthropicPlayer:
         else:
             self._messages.append({"role": "user", "content": observation})
 
+        # Snapshot messages before the API call
+        request_snapshot = copy.deepcopy(self._messages)
+
         client = self._get_client()
+        t0 = time.monotonic()
         response = client.messages.create(
             model=self.model,
             max_tokens=1024,
@@ -196,6 +231,19 @@ class AnthropicPlayer:
             messages=self._messages,
             tools=_openai_tools_to_anthropic(TOOL_SCHEMAS),
             tool_choice={"type": "any"},
+        )
+        latency_ms = int((time.monotonic() - t0) * 1000)
+
+        # Capture invocation metadata
+        usage = getattr(response, "usage", None)
+        response_dict = response.model_dump() if hasattr(response, "model_dump") else {}
+        self._last_invocation = LLMInvocation(
+            request_messages=request_snapshot,
+            response_raw=response_dict,
+            model_api_id=self.model,
+            input_tokens=getattr(usage, "input_tokens", None),
+            output_tokens=getattr(usage, "output_tokens", None),
+            latency_ms=latency_ms,
         )
 
         # Build assistant message for history, keeping only the first
@@ -225,6 +273,7 @@ class AnthropicPlayer:
 
     def reset(self) -> None:
         self._messages = []
+        self._last_invocation = None
 
 
 # ── Model registry ───────────────────────────────────────────────────
