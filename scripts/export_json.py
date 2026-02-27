@@ -7,8 +7,6 @@ games.json + per-game event files, and uploads them to B2.
 Requires env vars:
     BACKBLAZE_KEY_ID
     BACKBLAZE_APPLICATION_KEY
-    BACKBLAZE_CHUTES_BUCKET_NAME
-    BACKBLAZE_CHUTES_HOST          (S3-compatible endpoint hostname)
 """
 
 import os
@@ -17,12 +15,13 @@ import tempfile
 from pathlib import Path
 
 DB_PATH = Path("results/benchmark.db")
+BUCKET_NAME = "chutes-bench"
+ENDPOINT_URL = "https://s3.us-east-005.backblazeb2.com"
+PUBLIC_URL = f"https://f005.backblazeb2.com/file/{BUCKET_NAME}"
 
 REQUIRED_VARS = (
     "BACKBLAZE_KEY_ID",
     "BACKBLAZE_APPLICATION_KEY",
-    "BACKBLAZE_CHUTES_BUCKET_NAME",
-    "BACKBLAZE_CHUTES_HOST",
 )
 
 
@@ -30,7 +29,7 @@ def download_db() -> None:
     """Download benchmark.db from the public B2 bucket."""
     import urllib.request
 
-    url = "https://f005.backblazeb2.com/file/chutes-bench/benchmark.db"
+    url = f"{PUBLIC_URL}/benchmark.db"
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     print(f"Downloading {url} ...")
     urllib.request.urlretrieve(url, DB_PATH)
@@ -60,11 +59,10 @@ def main() -> None:
             key = "data/" + str(path.relative_to(out_dir))
             files[key] = path.read_bytes()
 
-        host = os.environ["BACKBLAZE_CHUTES_HOST"]
         upload_to_b2(
             files=files,
-            bucket_name=os.environ["BACKBLAZE_CHUTES_BUCKET_NAME"],
-            endpoint_url=f"https://{host}",
+            bucket_name=BUCKET_NAME,
+            endpoint_url=ENDPOINT_URL,
             key_id=os.environ["BACKBLAZE_KEY_ID"],
             app_key=os.environ["BACKBLAZE_APPLICATION_KEY"],
         )
