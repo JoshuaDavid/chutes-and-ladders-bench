@@ -72,6 +72,16 @@ class OpenAIPlayer:
 
     def next_action(self, observation: str) -> tuple[str, dict]:
         self._init_messages()
+        # If the last message is an assistant with tool_calls that never got
+        # a tool result (e.g. turn ended without observe()), inject one now.
+        if self._messages and self._messages[-1].get("role") == "assistant":
+            tc = self._messages[-1].get("tool_calls", [])
+            if tc:
+                self._messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc[0]["id"],
+                    "content": "OK",
+                })
         self._messages.append({"role": "user", "content": observation})
 
         client = self._get_client()
@@ -83,8 +93,12 @@ class OpenAIPlayer:
         )
         msg = response.choices[0].message
 
-        # Append assistant message to history
-        self._messages.append(msg.model_dump(exclude_none=True))
+        # Append assistant message to history, keeping only the first
+        # tool call so every tool_call_id gets a corresponding response.
+        msg_dict = msg.model_dump(exclude_none=True)
+        if msg_dict.get("tool_calls") and len(msg_dict["tool_calls"]) > 1:
+            msg_dict["tool_calls"] = msg_dict["tool_calls"][:1]
+        self._messages.append(msg_dict)
 
         if msg.tool_calls:
             tc = msg.tool_calls[0]
@@ -154,7 +168,25 @@ class AnthropicPlayer:
         return self._client
 
     def next_action(self, observation: str) -> tuple[str, dict]:
-        self._messages.append({"role": "user", "content": observation})
+        # If the last message is an assistant with a tool_use that never got
+        # a tool_result (e.g. turn ended without observe()), inject one
+        # combined with the new observation to keep alternating roles.
+        if self._messages and self._messages[-1].get("role") == "assistant":
+            content = self._messages[-1].get("content", [])
+            for block in content:
+                if getattr(block, "type", None) == "tool_use":
+                    self._messages.append({
+                        "role": "user",
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": block.id, "content": "OK"},
+                            {"type": "text", "text": observation},
+                        ],
+                    })
+                    break
+            else:
+                self._messages.append({"role": "user", "content": observation})
+        else:
+            self._messages.append({"role": "user", "content": observation})
 
         client = self._get_client()
         response = client.messages.create(
@@ -166,13 +198,23 @@ class AnthropicPlayer:
             tool_choice={"type": "any"},
         )
 
-        # Build assistant message for history
-        self._messages.append({"role": "assistant", "content": response.content})
-
+        # Build assistant message for history, keeping only the first
+        # tool_use block so every tool_use_id gets a tool_result.
+        first_tool = None
+        kept_content = []
         for block in response.content:
             if block.type == "tool_use":
-                self._last_tool_use_id = block.id
-                return block.name, block.input
+                if first_tool is None:
+                    first_tool = block
+                    kept_content.append(block)
+                # skip additional tool_use blocks
+            else:
+                kept_content.append(block)
+        self._messages.append({"role": "assistant", "content": kept_content})
+
+        if first_tool is not None:
+            self._last_tool_use_id = first_tool.id
+            return first_tool.name, first_tool.input
         return "forfeit", {}
 
     def observe(self, message: str) -> None:
